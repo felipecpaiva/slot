@@ -2,13 +2,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
-use slot_store::{write_slot_state, SlotState};
+use slot_store::{write_shelf_carts, write_slot_state, Recent, SlotState};
 
 use crate::card_log::CardWrites;
 
 #[derive(Default)]
 struct Queue {
     next: Option<(PathBuf, SlotState)>,
+    shelf_carts: Option<(PathBuf, Vec<(String, Recent)>)>,
     busy: bool,
     closed: bool,
 }
@@ -48,6 +49,16 @@ impl StateWriter {
         wake.notify_all();
     }
 
+    pub fn save_shelf_carts(&self, root: &Path, carts: &[(String, Recent)]) {
+        if !self.threaded {
+            return write_carts(root, carts, &self.failing);
+        }
+        let (lock, wake) = &*self.shared;
+        let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
+        q.shelf_carts = Some((root.to_path_buf(), carts.to_vec()));
+        wake.notify_all();
+    }
+
     pub fn card_writes(&self) -> Arc<CardWrites> {
         self.failing.clone()
     }
@@ -55,7 +66,7 @@ impl StateWriter {
     pub fn flush(&self) {
         let (lock, wake) = &*self.shared;
         let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
-        while q.next.is_some() || q.busy {
+        while q.next.is_some() || q.shelf_carts.is_some() || q.busy {
             q = wake.wait(q).unwrap_or_else(|e| e.into_inner());
         }
     }
@@ -73,12 +84,12 @@ impl Drop for StateWriter {
 fn work(shared: &Shared, failing: &CardWrites) {
     let (lock, wake) = &**shared;
     loop {
-        let (root, state) = {
+        let (state, carts) = {
             let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
             loop {
-                if let Some(job) = q.next.take() {
+                if q.next.is_some() || q.shelf_carts.is_some() {
                     q.busy = true;
-                    break job;
+                    break (q.next.take(), q.shelf_carts.take());
                 }
                 if q.closed {
                     return;
@@ -86,7 +97,12 @@ fn work(shared: &Shared, failing: &CardWrites) {
                 q = wake.wait(q).unwrap_or_else(|e| e.into_inner());
             }
         };
-        write(&root, &state, failing);
+        if let Some((root, state)) = state {
+            write(&root, &state, failing);
+        }
+        if let Some((root, carts)) = carts {
+            write_carts(&root, &carts, failing);
+        }
         lock.lock().unwrap_or_else(|e| e.into_inner()).busy = false;
         wake.notify_all();
     }
@@ -98,4 +114,12 @@ fn write(root: &Path, state: &SlotState, failing: &CardWrites) {
         eprintln!("slot: slot.state: {e}");
     }
     failing.wrote("slot.state", &written);
+}
+
+fn write_carts(root: &Path, carts: &[(String, Recent)], failing: &CardWrites) {
+    let written = write_shelf_carts(root, carts);
+    if let Err(e) = &written {
+        eprintln!("slot: shelf_carts.txt: {e}");
+    }
+    failing.wrote("shelf_carts.txt", &written);
 }

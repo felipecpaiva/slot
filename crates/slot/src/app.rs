@@ -407,6 +407,8 @@ pub struct App {
     powering_off: bool,
     radio: Box<dyn RadioJobs>,
     state_writer: crate::state_writer::StateWriter,
+    shelf_carts: Vec<(String, Recent)>,
+    rested: Option<(usize, usize)>,
 }
 
 const FACE_AHEAD: i32 = 8;
@@ -552,6 +554,8 @@ impl App {
             battery: None,
             last_led: None,
             powering_off: false,
+            shelf_carts: Vec::new(),
+            rested: None,
         }
     }
 
@@ -563,8 +567,12 @@ impl App {
         let mut app = App::new(carts);
         app.root = Some(root.to_path_buf());
         app.state = read_slot_state(root);
+        app.shelf_carts = slot_store::read_shelf_carts(root);
         app.restock_recents();
         app.restock_favorites();
+        for at in 0..app.shelves.len() {
+            app.recall_cart(at);
+        }
         if let Some((at, i)) = app.remembered_seat() {
             app.shelf_at = at;
             app.shelves[at].1.select(i);
@@ -745,7 +753,66 @@ impl App {
             stem: cart.stem.clone(),
         });
         self.state.shelf = Some(self.shelves[self.shelf_at].0.key());
+        self.keep_shelf_cart();
         self.persist();
+    }
+
+    fn remember_shelf_at_rest(&mut self) {
+        if !matches!(self.phase, Phase::Shelf) || self.held_dir.is_some() || self.shelf().held() {
+            return;
+        }
+        let seat = (self.shelf_at, self.shelf().index);
+        if self.rested == Some(seat) {
+            return;
+        }
+        self.rested = Some(seat);
+        let Some(cart) = self.shelf().carts.get(seat.1) else {
+            return;
+        };
+        let cart = Recent {
+            platform: cart.platform,
+            stem: cart.stem.clone(),
+        };
+        let key = self.shelves[seat.0].0.key();
+        if self.state.shelf.as_ref() == Some(&key)
+            && self.state.shelf_cart.as_ref() == Some(&cart)
+            && self.shelf_carts.contains(&(key.clone(), cart.clone()))
+        {
+            return;
+        }
+        self.state.shelf = Some(key);
+        self.state.shelf_cart = Some(cart);
+        self.keep_shelf_cart();
+        self.persist_soon();
+    }
+
+    fn keep_shelf_cart(&mut self) {
+        let (Some(key), Some(cart)) = (self.state.shelf.clone(), self.state.shelf_cart.clone())
+        else {
+            return;
+        };
+        match self.shelf_carts.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, kept)) => *kept = cart,
+            None => self.shelf_carts.push((key, cart)),
+        }
+        if let Some(root) = &self.root {
+            self.state_writer.save_shelf_carts(root, &self.shelf_carts);
+        }
+    }
+
+    fn recall_cart(&mut self, at: usize) {
+        let key = self.shelves[at].0.key();
+        let Some((_, cart)) = self.shelf_carts.iter().find(|(k, _)| *k == key) else {
+            return;
+        };
+        let shelf = &mut self.shelves[at].1;
+        if let Some(i) = shelf
+            .carts
+            .iter()
+            .position(|c| c.platform == cart.platform && c.stem == cart.stem)
+        {
+            shelf.select(i);
+        }
     }
 
     fn seat_of(&self, stem: &str, platform: Option<Platform>) -> Option<(usize, usize)> {
@@ -2572,6 +2639,7 @@ impl App {
     fn timers(&mut self) {
         self.play_hold();
         self.repeat_held_dir();
+        self.remember_shelf_at_rest();
         let offer = self.undo_label();
         if let Some(p) = &mut self.polaroids {
             p.set_undo(offer);
@@ -2717,6 +2785,7 @@ impl App {
             return;
         }
         let old = self.shelves[at].1.restock(carts);
+        self.rested = None;
         self.orphaned.extend(old);
         let empty = self.shelves[at].1.carts.is_empty();
         if self.shelf_at == at && empty {

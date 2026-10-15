@@ -364,7 +364,7 @@ fn state_path(root: &Path) -> PathBuf {
 const RECENTS_FILE: &str = "recents.txt";
 const FAVORITES_FILE: &str = "favorites.txt";
 
-fn list_path(root: &Path, name: &str) -> PathBuf {
+pub(crate) fn list_path(root: &Path, name: &str) -> PathBuf {
     root.join("Config").join(name)
 }
 
@@ -588,11 +588,11 @@ fn parse(text: &str) -> Option<SlotState> {
     })
 }
 
-fn platform_key(platform: Platform) -> String {
+pub(crate) fn platform_key(platform: Platform) -> String {
     platform.dir_name().to_ascii_lowercase()
 }
 
-fn recent_value(value: &str) -> Option<Recent> {
+pub(crate) fn recent_value(value: &str) -> Option<Recent> {
     let (platform, stem) = value.split_once('/')?;
     Some(Recent {
         platform: platform_value(platform)?,

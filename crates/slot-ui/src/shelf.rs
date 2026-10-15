@@ -328,6 +328,10 @@ impl Shelf {
         self.held = None;
     }
 
+    pub fn held(&self) -> bool {
+        self.held.is_some()
+    }
+
     pub fn tick(&mut self, now: Millis) {
         let Some((by, due, fired)) = self.held else {
             return;

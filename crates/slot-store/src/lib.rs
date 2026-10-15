@@ -9,6 +9,7 @@ pub mod ini;
 mod platform;
 mod ring;
 mod scan;
+mod shelf_carts;
 mod slot_state;
 mod stamp;
 
@@ -23,6 +24,7 @@ pub use gba::{header_clean, header_code, header_title, header_title_code};
 pub use platform::Platform;
 pub use ring::{StateEntry, StateRing, RING_MAX};
 pub use scan::{initial, is_hidden, listing, scan, sort_key, Cart, StoreError};
+pub use shelf_carts::{read_shelf_carts, write_shelf_carts, SHELF_CARTS_FILE};
 pub use slot_state::{
     read_slot_state, write_slot_state, Appearance, BezelPick, Recent, Shader, SlotState,
     WallpaperPick, WallpaperTint, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEEDS, FF_SPEED_DEFAULT,
