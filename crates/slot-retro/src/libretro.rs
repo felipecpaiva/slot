@@ -424,6 +424,16 @@ impl LibretroCore {
         self.host.asked_for_rumble
     }
 
+    pub fn needs_full_path(&self) -> bool {
+        let mut info = SystemInfo::default();
+        unsafe { (self.api.get_system_info)(&mut info) };
+        info.need_fullpath
+    }
+
+    pub fn rom_bytes_held(&self) -> usize {
+        self.rom.len()
+    }
+
     pub fn set_option(&mut self, key: &str, value: &str) {
         if !self.host.declared.is_empty() {
             match self.host.declared.get(key) {
@@ -555,14 +565,24 @@ impl RetroCore for LibretroCore {
 
     fn load(&mut self, rom: &Path) -> Result<(), CoreError> {
         self.unload();
-        self.rom = std::fs::read(rom)?;
+        let full_path = self.needs_full_path();
+        self.rom = if full_path {
+            std::fs::metadata(rom)?;
+            Vec::new()
+        } else {
+            std::fs::read(rom)?
+        };
         self.rom_path = Some(
             CString::new(rom.as_os_str().as_encoded_bytes())
                 .map_err(|_| CoreError::Load("rom path contains a nul".into()))?,
         );
         let info = GameInfo {
             path: self.rom_path.as_ref().map_or(ptr::null(), |p| p.as_ptr()),
-            data: self.rom.as_ptr() as *const c_void,
+            data: if full_path {
+                ptr::null()
+            } else {
+                self.rom.as_ptr() as *const c_void
+            },
             size: self.rom.len(),
             meta: ptr::null(),
         };

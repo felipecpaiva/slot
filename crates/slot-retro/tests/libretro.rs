@@ -206,3 +206,48 @@ fn the_cartridge_clock_in_a_save_reaches_the_game() {
         "the save's clock never reached the core"
     );
 }
+
+fn gpsp_core() -> Option<LibretroCore> {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/gpsp_libretro.dylib");
+    if !p.exists() {
+        return None;
+    }
+    Some(LibretroCore::open(&p).expect("vendored gpSP is present but would not open"))
+}
+
+#[test]
+fn gpsp_reads_the_rom_from_its_path_and_slot_keeps_no_copy() {
+    let _g = lock();
+    let Some(mut c) = gpsp_core() else { return };
+    assert!(c.needs_full_path());
+    c.load(&test_rom()).unwrap();
+    for _ in 0..60 {
+        c.run_frame(ButtonMask::default());
+    }
+    assert_eq!(c.rom_bytes_held(), 0);
+    assert!(c.video_xrgb8888().iter().any(|b| *b != 0));
+}
+
+#[test]
+fn mgba_is_still_handed_the_rom_in_memory() {
+    let _g = lock();
+    let Some(mut c) = test_core() else { return };
+    let rom = test_rom();
+    assert!(!c.needs_full_path());
+    c.load(&rom).unwrap();
+    assert_eq!(
+        c.rom_bytes_held() as u64,
+        std::fs::metadata(&rom).unwrap().len()
+    );
+}
+
+#[test]
+fn a_missing_rom_is_still_an_io_error_when_the_core_reads_the_path() {
+    let _g = lock();
+    let Some(mut c) = gpsp_core() else { return };
+    let missing = Path::new(env!("CARGO_TARGET_TMPDIR")).join("no-such-cart.gba");
+    assert!(matches!(
+        c.load(&missing),
+        Err(slot_retro::CoreError::Io(_))
+    ));
+}
